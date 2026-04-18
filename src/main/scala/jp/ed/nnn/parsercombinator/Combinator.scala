@@ -26,6 +26,56 @@ abstract class Combinator {
    */
   def s(literal: String): Parser[String] = string(literal)
 
+  // === 繰り返し合成 ===
+  def rep[T](parser: => Parser[T]): Parser[List[T]] = input => {
+    // --- 実際の処理 読めるだけ読むループ ---
+    def repeatRec(input: String): (List[T], String) = parser(input) match {
+      case Success(value, next1) =>
+        val (result, next2) = repeatRec(next1)
+        (value :: result, next2)
+      case Failure =>
+        (Nil, input)
+    }
+
+    val (result, next) = repeatRec(input)
+    Success(result, next)
+  }
+  
+  def rep1sep[T](parser: => Parser[T], sep: Parser[String]): Parser[List[T]] =
+    parser ~ rep(sep ~> parser) ^^ { t => t._1 :: t._2 }
+
+  def success[T](value: T): Parser[T] = input => Success(value, input)
+
+  def repsep[T](parser: => Parser[T], sep: Parser[String]): Parser[List[T]] =
+    rep1sep(parser, sep) | success(List())
+
+  // === 浮動小数点,文字列リテラル ===
+  val floatingPointNumber: Parser[String] = input => {
+    val r = """^(-?\d+(\.\d*)?|\d*\.\d+)([eE][+-]?\d+)?[fFdD]?""".r
+    val matchIterator = r.findAllIn(input).matchData
+    if (matchIterator.hasNext) {
+      val next = matchIterator.next()
+      val all = next.group(0)
+      val target = next.group(1)
+      Success(target, input.substring(all.length))
+    } else {
+      Failure
+    }
+  }
+
+  val stringLiteral: Parser[String] = input => {
+    val r = ("^\"(" + """([^"\p{Cntrl}\\]|\\[\\'"bfnrt]|\\u[a-fA-F0-9]{4})*+""" + ")\"").r
+    val matchIterator = r.findAllIn(input).matchData
+    if (matchIterator.hasNext) {
+      val next = matchIterator.next()
+      val all = next.group(0)
+      val target = next.group(1)
+      Success(target, input.substring(all.length))
+    } else {
+      Failure
+    }
+  }
+
   // === 選択 ===
   extension [T](parser: Parser[T])
     /**
@@ -34,7 +84,7 @@ abstract class Combinator {
      * @param right 選択を行うパーサー
      * @return
      */
-    def |[U >: T](right: Parser[U]): Parser[U] = input =>
+    def |[U >: T](right: => Parser[U]): Parser[U] = input =>
       parser(input) match
         case success@Success(_, _) => success
         case Failure => right(input)
@@ -47,7 +97,7 @@ abstract class Combinator {
      * @tparam U パーサーの結果の型
      * @return
      */
-    def ~[U](right: Parser[U]): Parser[(T, U)] = input => {
+    def ~[U](right: => Parser[U]): Parser[(T, U)] = input => {
       parser(input) match {
         case Success(value1, next1) =>
           right(next1) match {
@@ -67,7 +117,7 @@ abstract class Combinator {
      * @param right 右側のパーサー
      * @return パーサーの結果の型
      */
-    def <~(right: Parser[Any]): Parser[T] = input => {
+    def <~(right: => Parser[Any]): Parser[T] = input => {
       parser(input) match {
         case Success(value1, next1) =>
           right(next1) match {
@@ -88,7 +138,7 @@ abstract class Combinator {
      * @tparam U パーサーの結果の型
      * @return
      */
-    def ~>[U](right: Parser[U]): Parser[U] = input => {
+    def ~>[U](right: => Parser[U]): Parser[U] = input => {
       parser(input) match {
         case Success(value1, next1) =>
           right(next1) match {
